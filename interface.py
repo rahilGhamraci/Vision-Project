@@ -7,9 +7,9 @@ import time
 from collections import deque
 
 
-from part1 import bgr_to_hsv, in_range, find_contours, min_enclosing_circle, gaussian_blur
-from part3 import calculate_3d_position, detect_camera_movement, calculate_mid_point, calculate_horizontal_displacement,validate_y_coordinates
-
+from part1V1 import bgr_to_hsv, in_range, find_contours, min_enclosing_circle, gaussian_blur
+from part3V1 import calculate_3d_position, detect_camera_movement, calculate_mid_point, calculate_horizontal_displacement,validate_y_coordinates
+from part3V2 import load_model,detect_objects_mobinet
 #.............................................................................................
 def home_page():
     st.title("Home Page")
@@ -22,67 +22,89 @@ def home_page():
 
 def detecting_page():
     st.title("Detecting a 3D Object Page")
+
     # Input for URL
     url = st.text_input("Enter the video stream URL:", "http://192.168.100.4:8080/video")
 
-    if st.button("Start Detecting", key="start_detecting"):
+    # Choice of detection method
+    detection_method = st.radio(
+        "Choose the detection method:",
+        ("Color-based Detection", "MobileNet SSD Detection")
+    )
+
+    # MobileNet SSD model paths and class names
+    prototxt_path = "deploy.prototxt.txt"
+    model_path = "mobilenet_iter_73000.caffemodel"
+    class_names = ["background", "aeroplane", "bicycle", "bird", "boat", "bottle", "bus", "car", "cat", "chair", "cow", "diningtable", "dog", "horse", "motorbike", "person", "pottedplant", "sheep", "sofa", "train", "tvmonitor"]
+    
+    # Color range for color-based detection (green)
+    lower = np.array([35, 100, 50])
+    upper = np.array([85, 255, 255])
+    
+    if detection_method == "MobileNet SSD Detection":
+        # Load MobileNet SSD model
+        with st.spinner("Loading Mobinet ssd model..."):
+            model = load_model(prototxt_path, model_path)
         
+       
+
+    if st.button("Start Detecting", key="start_detecting"):
         cap = cv2.VideoCapture(url)
 
         if not cap.isOpened():
+            print('err')
             st.error("Failed to connect to the video stream. Please check the URL.")
             return
-        # Plage de couleurs pour détecter le vert (peut être ajustée selon votre objet)
-        lower = np.array([35, 100, 50])  # Valeurs ajustées
-        upper = np.array([85, 255, 255])  # Valeurs ajustées
+
+        
 
         stframe = st.empty()
-        stop_detection = st.button("Stop Detection", key="stop_detection")  
+        stop_detection = st.button("Stop Detection", key="stop_detection")
 
         while True:
             ret, frame = cap.read()
 
             if not ret:
-                print("Erreur : Impossible de lire l'image")
+                st.error("Error: Unable to read the video stream.")
                 break
 
-            # Convertir l'image en HSV
-            hsv = bgr_to_hsv(frame)
+            if detection_method == "Color-based Detection":
+                # Convert the frame to HSV
+                hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
 
-            # Appliquer un flou gaussien pour réduire le bruit
-            blurred = gaussian_blur(hsv, 3)
+                # Apply Gaussian blur
+                blurred = cv2.GaussianBlur(hsv, (3, 3), 0)
 
-            # Créer le masque pour la couleur verte
-            mask = in_range(blurred, lower, upper)
-   
-            # Trouver les contours dans le masque
-            contours = find_contours(mask)
-    
-            # Si des contours sont trouvés
-            if contours:
-                # Trier les contours en fonction de la taille
-                contours = sorted(contours, key=cv2.contourArea, reverse=True)
+                # Create a mask for the green color
+                mask = cv2.inRange(blurred, lower, upper)
 
-                for contour in contours:
-                    # Trouver le cercle minimum qui entoure le contour
-                    center, radius = min_enclosing_circle(contour)
-                    
-                    # Si le rayon est suffisant pour être un objet visible
-                    if radius > 400:
-                        # Dessiner le cercle sur l'image
-                        print('detected')
-                        cv2.circle(frame, center, radius, (0, 255, 0), 2)  # Cercle vert
-                        cv2.putText(frame, "Objet detecte dans la camera  ", (center[0] - 50, center[1] - 10),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 0), 2)
+                # Find contours in the mask
+                contours, _ = cv2.findContours(mask, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
 
-                    cv2.circle(frame, tuple(map(int, center)), int(radius), (0, 255, 0), 2)  
+                if contours:
+                    # Sort contours by area, largest first
+                    contours = sorted(contours, key=cv2.contourArea, reverse=True)
 
+                    for contour in contours:
+                        # Get the minimum enclosing circle
+                        (x, y), radius = cv2.minEnclosingCircle(contour)
+
+                        if radius > 20:  # Minimum radius threshold
+                            cv2.circle(frame, (int(x), int(y)), int(radius), (0, 255, 0), 2)
+                            cv2.putText(frame, "Object detected", (int(x) - 50, int(y) - 10),
+                                        cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 0), 2)
+
+            elif detection_method == "MobileNet SSD Detection":
+                frame, _ = detect_objects_mobinet(frame, model, class_names, target_class="bottle")
+
+            # Display the frame in Streamlit
             stframe.image(frame, channels="BGR")
 
             if stop_detection:
                 cap.release()
                 cv2.destroyAllWindows()
                 break
+
     
 #....................................................................................................
 
@@ -314,7 +336,15 @@ def position_page():
     checkerboard_height = st.number_input("Checkerboard Height:", value=7, step=1)
     square_size = st.number_input("Square Size (in mm):", value=20, step=1)
 
-    
+    detection_method = st.radio(
+        "Choose the detection method:",
+        ("Color-based Detection", "MobileNet SSD Detection")
+    )
+
+    # MobileNet SSD model paths and class names
+    prototxt_path = "deploy.prototxt.txt"
+    model_path = "mobilenet_iter_73000.caffemodel"
+    class_names = ["background", "aeroplane", "bicycle", "bird", "boat", "bottle", "bus", "car", "cat", "chair", "cow", "diningtable", "dog", "horse", "motorbike", "person", "pottedplant", "sheep", "sofa", "train", "tvmonitor"]
 
     frame_skip = 5  
     frame_count = 0
@@ -326,6 +356,9 @@ def position_page():
     movement1 = False
     # Add a flag to track recalibration
     recalibration_done = False
+
+    lower = np.array([35, 100, 50])
+    upper = np.array([85, 255, 255])
 
     
 
@@ -375,6 +408,11 @@ def position_page():
         stframe2 = st.empty()
 
         stop = st.button("Stop", key="stop")
+
+        if detection_method == "MobileNet SSD Detection":
+            # Load MobileNet SSD model
+            with st.spinner("Loading Mobinet ssd model..."):
+                model = load_model(prototxt_path, model_path)
         while True:
             frame_count += 1
 
@@ -414,71 +452,89 @@ def position_page():
                     break
                 elif not movement1 and not movement2:
                     recalibration_done = False  # Reset the flag when no movement is detectedq
+            
+            if detection_method == 'Color-based Detection':
+                # Process frames (color conversion, blurring, detection, etc.)
+                hsv1 = bgr_to_hsv(frame1)
+                hsv2 = bgr_to_hsv(frame2)
 
-            # Process frames (color conversion, blurring, detection, etc.)
-            hsv1 = bgr_to_hsv(frame1)
-            hsv2 = bgr_to_hsv(frame2)
+                frame1_blurred = gaussian_blur(hsv1, 3)
+                frame2_blurred = gaussian_blur(hsv2, 3)
 
-            frame1_blurred = gaussian_blur(hsv1, 3)
-            frame2_blurred = gaussian_blur(hsv2, 3)
+                mask1 = in_range(frame1_blurred, lower, upper)
+                mask2 = in_range(frame2_blurred, lower, upper)
 
-            lower = np.array([35, 100, 50])
-            upper = np.array([85, 255, 255])
+                contours1 = find_contours(mask1)
+                contours2 = find_contours(mask2)
 
-            mask1 = in_range(frame1_blurred, lower, upper)
-            mask2 = in_range(frame2_blurred, lower, upper)
+                if contours1 and contours2:
+                    # Sort contours by area
+                    contours1 = sorted(contours1, key=cv2.contourArea, reverse=True)
+                    contours2 = sorted(contours2, key=cv2.contourArea, reverse=True)
 
-            contours1 = find_contours(mask1)
-            contours2 = find_contours(mask2)
+                    # Trouver les cercles minimums
+                    center1, radius1 = min_enclosing_circle(contours1[0])
+                    center2, radius2 = min_enclosing_circle(contours2[0])
 
-            if contours1 and contours2:
+                    # Use new threshold to detect the object
+                    if radius1 > 400 and radius2 > 400:
+                        # Dessiner le cercle sur l'image
+                        cv2.circle(frame1, center1, radius1, (255, 0, 0), 2)  # Cercle vert
+                        cv2.putText(frame1, "Objet detecte dans la camera 1 ", (center1[0] - 50, center1[1] - 10),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 0), 2)
 
-                # Sort contours by area
-                contours1 = sorted(contours1, key=cv2.contourArea, reverse=True)
-                contours2 = sorted(contours2, key=cv2.contourArea, reverse=True)
-
-                # Trouver les cercles minimums
-                center1, radius1 = min_enclosing_circle(contours1[0])
-                center2, radius2 = min_enclosing_circle(contours2[0])
-
-                # Use new threshold to detect the object
-                if radius1 > 400 and radius2 > 400:
-
-                    # Dessiner le cercle sur l'image
-                    cv2.circle(frame1, center1, radius1, (255, 0, 0), 2)  # Cercle vert
-                    cv2.putText(frame1, "Objet detecte dans la camera 1 ", (center1[0] - 50, center1[1] - 10),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 0), 2)
-
-                    # Dessiner le cercle sur l'image
-                    cv2.circle(frame2, center2, radius2, (255, 0, 0), 2)  # Cercle vert
-                    cv2.putText(frame2, "Objet detecte dans la camera 2 ", (center2[0] - 50, center2[1] - 10),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 0), 2)
+                        # Dessiner le cercle sur l'image
+                        cv2.circle(frame2, center2, radius2, (255, 0, 0), 2)  # Cercle vert
+                        cv2.putText(frame2, "Objet detecte dans la camera 2 ", (center2[0] - 50, center2[1] - 10),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 0), 2)
                 
-                # Calcul de la position 3D
-                points_3d = calculate_3d_position(
-                    center1, center2, K1, K2, rvecs1[0], tvecs1[0], rvecs2[0], tvecs2[0]
-                )
-                st.write(f"Position 3D estimée : {points_3d}")
+                    
 
-                # Validation de l'écart vertical entre les caméras
-                if validate_y_coordinates(center1, center2):
-                    st.write("Les coordonnées y sont similaires.")
+                    # Validation de l'écart vertical entre les caméras
+                    if validate_y_coordinates(center1, center2):
+                        st.write("Les coordonnées y sont similaires.")
+                    else:
+                        st.write("Les coordonnées y ne sont pas similaires.Skipping calculations.")
+                        continue
+                    
+                    # Calcul de la position 3D
+                    points_3d = calculate_3d_position(
+                       center1, center2, K1, K2, rvecs1[0], tvecs1[0], rvecs2[0], tvecs2[0]
+                    )
+                    st.write(f"Position 3D estimée : {points_3d}")
+
+                    # Calcul et affichage de l'écart horizontal
+                    horizontal_displacement = calculate_horizontal_displacement(center1, center2)
+                    st.write(f"Écart horizontal entre les centres : {horizontal_displacement} pixels")
+
+                    # Afficher les résultats
+                    cv2.circle(frame1, tuple(map(int, center1)), int(radius1), (0, 255, 0), 2)
+                    cv2.circle(frame2, tuple(map(int, center2)), int(radius2), (0, 255, 0), 2)
+            
+            elif detection_method == 'MobileNet SSD Detection':
+                frame1, centers1 = detect_objects_mobinet(frame1, model , class_names)
+                frame2, centers2 = detect_objects_mobinet(frame2, model , class_names)
+
+                if centers1[0] and centers2[0] and centers1[1] and centers2[1]:
+                    if validate_y_coordinates(centers1, centers2):
+                        st.write("Les coordonnées y sont similaires.")
+                    else:
+                        st.write("Les coordonnées y ne sont pas similaires.Skipping calculations.")
+                        continue
+
+                    points_3d = calculate_3d_position(centers1, centers2, K1, K2, rvecs1[0], tvecs1[0], rvecs2[0], tvecs2[0])
+                    st.write(f"Position 3D estimée : {points_3d}")
+
+                    # Calcul et affichage de l'écart horizontal
+                    horizontal_displacement = calculate_horizontal_displacement(centers1, centers2)
+                    st.write(f"Écart horizontal entre les centres : {horizontal_displacement} pixels")
                 else:
-                    st.write("Les coordonnées y ne sont pas similaires.")
-
-                # Calcul et affichage de l'écart horizontal
-                horizontal_displacement = calculate_horizontal_displacement(center1, center2)
-                st.write(f"Écart horizontal entre les centres : {horizontal_displacement} pixels")
-
-                # Afficher les résultats
-                cv2.circle(frame1, tuple(map(int, center1)), int(radius1), (0, 255, 0), 2)
-                cv2.circle(frame2, tuple(map(int, center2)), int(radius2), (0, 255, 0), 2)
-
+                    st.write("No object detected in one or both cameras. Skipping calculations.")
+            
             # Update previous frames
             previous_frame1 = frame1.copy()
             previous_frame2 = frame2.copy()
-            
-            
+                
 
             stframe1.image(frame1, channels="BGR")
             stframe2.image(frame2, channels="BGR")
