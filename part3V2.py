@@ -1,3 +1,9 @@
+'''
+Ce fichier contient le code de la partie 3 :
+calcul de la postion 3D , en utilisant mobinet ssd pour la detection de l'objet
+
+'''
+
 import cv2
 import numpy as np
 

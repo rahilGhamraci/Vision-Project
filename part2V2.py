@@ -60,6 +60,7 @@ def calibrate_camera_from_video(camera_source, rows, cols, square_size):
     # Effectuer la calibration
     ret, K, dist, rvecs, tvecs = cv2.calibrateCamera(obj_points, img_points, gray.shape[::-1], None, None)
     return ret, K, dist, rvecs, tvecs
+
 """
 ret: A boolean indicating if the calibration was successful (True) or not (False).
 K (Intrinsic matrix)

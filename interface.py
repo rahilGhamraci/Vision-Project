@@ -24,7 +24,7 @@ def detecting_page():
     st.title("Detecting a 3D Object Page")
 
     # Input for URL
-    url = st.text_input("Enter the video stream URL:", "http://192.168.100.4:8080/video")
+    url = st.text_input("Enter the video stream URL:", "http://192.168.100.122:8080/video")
 
     # Choice of detection method
     detection_method = st.radio(
@@ -55,12 +55,9 @@ def detecting_page():
             print('err')
             st.error("Failed to connect to the video stream. Please check the URL.")
             return
-
         
-
-        stframe = st.empty()
-        stop_detection = st.button("Stop Detection", key="stop_detection")
-
+        
+      
         while True:
             ret, frame = cap.read()
 
@@ -88,8 +85,9 @@ def detecting_page():
                     for contour in contours:
                         # Get the minimum enclosing circle
                         (x, y), radius = cv2.minEnclosingCircle(contour)
+                        #print(radius)
 
-                        if radius > 20:  # Minimum radius threshold
+                        if radius > 40:  # Minimum radius threshold
                             cv2.circle(frame, (int(x), int(y)), int(radius), (0, 255, 0), 2)
                             cv2.putText(frame, "Object detected", (int(x) - 50, int(y) - 10),
                                         cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 0), 2)
@@ -97,13 +95,16 @@ def detecting_page():
             elif detection_method == "MobileNet SSD Detection":
                 frame, _ = detect_objects_mobinet(frame, model, class_names, target_class="bottle")
 
-            # Display the frame in Streamlit
-            stframe.image(frame, channels="BGR")
+            
+           
+            frame_new = cv2.resize(frame, (640, 480))
+            cv2.imshow('Detection', frame_new)
 
-            if stop_detection:
+            if cv2.waitKey(10) & 0xFF == ord('q'):
                 cap.release()
                 cv2.destroyAllWindows()
                 break
+
 
     
 #....................................................................................................
@@ -134,6 +135,7 @@ def processing_thread(queue_in, queue_out, checkerboard_width, checkerboard_heig
 
             # Perform calibration if motion is detected or first run
             if (motion_detected_event.is_set() or not calibrated) and ret:
+                
                 imgpoints.append(corners2)
                 objpoints.append(objp)
 
@@ -161,7 +163,7 @@ def calibration_page():
     st.title("Camera Calibration Interface")
 
     # Input for URL
-    url = st.text_input("Enter the video stream URL:", "http://192.168.100.4:8080/video")
+    url = st.text_input("Enter the video stream URL:", "http://192.168.137.234:8080/video")
 
     # Calibration parameters
     checkerboard_width = st.number_input("Checkerboard Width:", value=9, step=1)
@@ -200,21 +202,24 @@ def calibration_page():
         thread.daemon = True
         thread.start()
 
-        # Streamlit live video display
-        stframe = st.empty()
-        st.subheader("Calibration Results:")
-        result_text = st.empty()
-
+        
         prev_gray_frame = None
 
-        stop_calibration = st.button("Stop Calibration", key="stop_calibration")  
+        st.subheader("Calibration Results")
+        ret1_holder = st.empty()
+        K1_holder = st.empty()
+        dist1_holder = st.empty()
+        rvecs1_holder = st.empty()
+        tvecs1_holder = st.empty()
+
+      
         while True:
             ret, frame = cap.read()
             if not ret:
                 st.error("Failed to grab a frame.")
                 break
 
-            frame_resized = cv2.resize(frame, (640, 480))
+            frame_resized = cv2.resize(frame, (600, 400))
             gray = cv2.cvtColor(frame_resized, cv2.COLOR_BGR2GRAY)
 
             # Skip motion detection on the first frame
@@ -245,22 +250,22 @@ def calibration_page():
             # Display processed frame with corners
             if not queue_out.empty():
                 processed_frame, calibration_params = queue_out.get()
-                stframe.image(processed_frame, channels="BGR")
+                
+                cv2.imshow('calibrage', processed_frame)
+
 
                 # Display calibration results if available
                 if calibration_params:
-                    formatted_params = "\n".join([ 
-                        f"ret: {calibration_params['ret']}",
-                        f"Camera Matrix:\n{np.array(calibration_params['camera_matrix'])}",
-                        f"Distortion Coefficients:\n{np.array(calibration_params['dist_coefficients'])}",
-                        f"Rotation Vectors:\n{calibration_params['rotation_vectors']}",
-                        f"Translation Vectors:\n{calibration_params['translation_vectors']}",
-                    ])
-                    result_text.text(formatted_params)
+                    
+                    ret1_holder.write(f"**Ret**: {calibration_params['ret']}")
+                    K1_holder.write(f"**Intrinsic Matrix (K1)**: \n{np.array(calibration_params['camera_matrix'])}")
+                    dist1_holder.write(f"**Distortion Coefficients (dist1)**: \n{calibration_params['dist_coefficients']}")
+                    rvecs1_holder.write(f"**Rotation Vectors (rvecs1)**: \n{np.array(calibration_params['rotation_vectors'])}")
+                    tvecs1_holder.write(f"**Translation Vectors (tvecs1)**: \n{np.array(calibration_params['translation_vectors'])}")
 
             prev_gray_frame = gray.copy()
 
-            if stop_calibration:
+            if cv2.waitKey(10) & 0xFF == ord('q'):
                 cap.release()
                 cv2.destroyAllWindows()
                 break
@@ -273,28 +278,26 @@ def calibration_page():
 # Apporter des modifications au code de la fonction calibrate_camera_from_video 
 # déja definit dans part2V2 pour qu'il puisse etre utilisé dans l'interface
 
-def calibrate_camera_from_video(camera_source, rows, cols, square_size):
+from multiprocessing import Process, Manager
+
+def calibrate_camera_from_video(name, camera_source, rows, cols, square_size):
     cap = cv2.VideoCapture(camera_source)
     if not cap.isOpened():
-        st.error(f"Error: Unable to open camera source: {camera_source}")
+        print(f"Error: Unable to open camera source: {camera_source}")
         return False, None, None, None, None
 
-    obj_points = []  # Points 3D in the real world
-    img_points = []  # Points 2D in the image
+    obj_points = []
+    img_points = []
     obj_p = np.zeros((rows * cols, 3), np.float32)
     obj_p[:, :2] = np.mgrid[0:cols, 0:rows].T.reshape(-1, 2)
     obj_p *= square_size
 
-    progress_bar = st.progress(0)
-    frame_placeholder = st.empty()
-    status_placeholder = st.empty()
-
-    while len(img_points) < 10:  # Minimum 10 images for calibration
+    while True:
         ret, frame = cap.read()
         if not ret:
-            status_placeholder.error("Error reading video stream.")
+            print("Error reading video.")
             break
-        
+
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         ret, corners = cv2.findChessboardCorners(gray, (cols, rows), None)
 
@@ -303,33 +306,32 @@ def calibrate_camera_from_video(camera_source, rows, cols, square_size):
             obj_points.append(obj_p)
             cv2.drawChessboardCorners(frame, (cols, rows), corners, ret)
 
-        # Update the progress bar and display the frame
-        progress_bar.progress(min(len(img_points) / 10, 1.0))
-        frame_resized = cv2.resize(frame, (640, 480))
-        frame_placeholder.image(frame_resized, channels="BGR")
-
+        frame_new = cv2.resize(frame, (640, 480))
+        cv2.imshow(name, frame_new)
         if len(img_points) >= 10:
-            status_placeholder.success("Calibration completed!")
+            print("Calibration ready!")
+            ret, K, dist, rvecs, tvecs = cv2.calibrateCamera(obj_points, img_points, gray.shape[::-1], None, None)
             break
 
-        time.sleep(0.1)  # Small delay to simulate smooth progress
+        if cv2.waitKey(1) & 0xFF == ord('q'):
+            break
 
-    cap.release()
     cv2.destroyAllWindows()
-
     if len(img_points) < 10:
-        st.error("Not enough valid frames for calibration.")
+        print("Not enough images for calibration.")
         return False, None, None, None, None
 
-    # Perform calibration
-    ret, K, dist, rvecs, tvecs = cv2.calibrateCamera(obj_points, img_points, gray.shape[::-1], None, None)
     return ret, K, dist, rvecs, tvecs
+
+def calibrate_and_store(camera_name, camera_source, checkerboard_width, checkerboard_height, square_size, results):
+    ret, K, dist, rvecs, tvecs = calibrate_camera_from_video(camera_name, camera_source, checkerboard_width, checkerboard_height, square_size)
+    results[camera_name] = {"ret": ret, "K": K, "dist": dist, "rvecs": rvecs, "tvecs": tvecs}
 
 def position_page():
     st.title("Position Page")
 
-    url1 = st.text_input("Enter the first video stream URL:", "http://192.168.100.4:8080/video")
-    url2 = st.text_input("Enter the second video stream URL:", "http://192.168.100.4:8080/video")
+    url1 = st.text_input("Enter the first video stream URL:", "http://192.168.137.234:8080/video")
+    url2 = st.text_input("Enter the second video stream URL:", "http://192.168.137.234:8080/video")
 
     # Calibration parameters
     checkerboard_width = st.number_input("Checkerboard Width:", value=9, step=1)
@@ -341,6 +343,9 @@ def position_page():
         ("Color-based Detection", "MobileNet SSD Detection")
     )
 
+      
+
+
     # MobileNet SSD model paths and class names
     prototxt_path = "deploy.prototxt.txt"
     model_path = "mobilenet_iter_73000.caffemodel"
@@ -349,53 +354,74 @@ def position_page():
     frame_skip = 5  
     frame_count = 0
 
-    previous_frame1 = None
-    previous_frame2 = None
-
-    movement2 = False
-    movement1 = False
-    # Add a flag to track recalibration
-    recalibration_done = False
-
     lower = np.array([35, 100, 50])
     upper = np.array([85, 255, 255])
+
+ 
+            
+
+    
 
     
 
     if st.button("Start", key="start"):
          
-        with st.spinner("Calibrating first camera..."):
-            ret1, K1, dist1, rvecs1, tvecs1 = calibrate_camera_from_video(
-                url1, checkerboard_width, checkerboard_height, square_size
-            )
-        
-        if not ret1:
-            st.error("Calibration failed for the first camera.")
-            exit(0)
-        else:
-            st.success("First camera calibration successful!")
-            st.write("Camera Matrix (K1):", K1)
-            st.write("Distortion Coefficients (dist1):", dist1)
-            st.write("Rotation R:  (rvecs1):", rvecs1)
-            st.write("Translation T  (tvecs1):", tvecs1)
-        
-        with st.spinner("Calibrating second camera..."):
-            ret2, K2, dist2, rvecs2, tvecs2 = calibrate_camera_from_video(
-                url2, checkerboard_width, checkerboard_height, square_size
-            )
-        
-        if not ret2:
-            st.error("Calibration failed for the second camera.")
-            exit(0)
-        else:
-            st.success("Second camera calibration successful!")
-            st.write("Camera Matrix (K2):", K2)
-            st.write("Distortion Coefficients (dist2):", dist2)
-            st.write("Rotation R:  (rvecs2):", rvecs2)
-            st.write("Translation T  (tvecs2):", tvecs2)
+        manager = Manager()
+        calibration_results = manager.dict()
 
-        if ret1 and ret2:
-            st.success("Both cameras successfully calibrated!")
+        process1 = Process(target=calibrate_and_store, args=("Camera 1", url1, checkerboard_width, checkerboard_height, square_size, calibration_results))
+        process2 = Process(target=calibrate_and_store, args=("Camera 2", url2, checkerboard_width, checkerboard_height, square_size, calibration_results))
+
+        process1.start()
+        process2.start()
+
+        process1.join()
+        process2.join()
+
+        cam1_results = calibration_results.get("Camera 1", {})
+        cam2_results = calibration_results.get("Camera 2", {})
+
+        if cam1_results["ret"] is None or cam2_results["ret"] is None:
+            st.error("Calibration failed for one or both cameras.")
+            return
+
+        st.success("Calibration completed for both cameras!")
+
+        ret1, K1, dist1, rvecs1, tvecs1 = cam1_results['ret'] , cam1_results['K'], cam1_results['dist'], cam1_results['rvecs'], cam1_results['tvecs']
+        ret2, K2, dist2, rvecs2, tvecs2 = cam2_results['ret'] , cam2_results['K'], cam2_results['dist'], cam2_results['rvecs'], cam2_results['tvecs']
+
+        col1, col2 = st.columns(2)
+        with col1:
+            st.subheader("Calibration Results For Caméra 1")
+            ret1_holder = st.empty()
+            K1_holder = st.empty()
+            dist1_holder = st.empty()
+            rvecs1_holder = st.empty()
+            tvecs1_holder = st.empty()
+  
+            ret1_holder.write(f"**Ret**: {cam1_results['ret']}")
+            K1_holder.write(f"**Intrinsic Matrix (K1)**: \n{cam1_results['K']}")
+            dist1_holder.write(f"**Distortion Coefficients (dist1)**: \n{cam1_results['dist']}")
+            rvecs1_holder.write(f"**Rotation Vectors (rvecs1)**: \n{cam1_results['rvecs']}")
+            tvecs1_holder.write(f"**Translation Vectors (tvecs1)**: \n{cam1_results['tvecs']}")
+
+        with col2:
+            st.subheader("Calibration Results For Caméra 2")
+            ret2_holder = st.empty()
+            K2_holder = st.empty()
+            dist2_holder = st.empty()
+            rvecs2_holder = st.empty()
+            tvecs2_holder = st.empty()
+
+           
+            ret2_holder.write(f"**Ret**: {ret2}")
+            K2_holder.write(f"**Intrinsic Matrix (K2)**: \n{cam1_results['K']}")
+            dist2_holder.write(f"**Distortion Coefficients (dist2)**: \n{cam2_results['dist']}")
+            rvecs2_holder.text(f"**Rotation Vectors (rvecs2)**: \n{cam1_results['rvecs']}")
+            tvecs2_holder.text(f"**Translation Vectors (tvecs2)**: \n{cam2_results['tvecs']}")
+
+ 
+            
 
         cap1 = cv2.VideoCapture(url1)
         cap2 = cv2.VideoCapture(url2)
@@ -404,11 +430,11 @@ def position_page():
             st.error("Erreur lors de l'ouverture des caméras.")
             exit(0)
 
-        stframe1 = st.empty()
-        stframe2 = st.empty()
+        st.subheader("Position Estimation")
+        points_3d_placeholder = st.empty()
+        displacement_placeholder = st.empty()
 
-        stop = st.button("Stop", key="stop")
-
+ 
         if detection_method == "MobileNet SSD Detection":
             # Load MobileNet SSD model
             with st.spinner("Loading Mobinet ssd model..."):
@@ -427,32 +453,9 @@ def position_page():
                 st.error("Erreur lors de la lecture des caméras.")
                 break
 
-            if previous_frame1 is not None and previous_frame2 is not None:
-                movement1 = detect_camera_movement(previous_frame1, frame1, change_ratio_threshold=0.2)
-                movement2 = detect_camera_movement(previous_frame2, frame2, change_ratio_threshold=0.2)
+            frame1 = cv2.resize(frame1, (600, 400))
+            frame2 = cv2.resize(frame2, (600, 400))
 
-            if (movement1 or movement2) and not recalibration_done:
-                st.write("Mouvement détecté. Recalibration des caméras...")
-
-                with st.spinner("Calibrating first camera..."):
-                    ret1, K1, dist1, rvecs1, tvecs1 = calibrate_camera_from_video(
-                    url1, checkerboard_width, checkerboard_height, square_size
-                )
-
-                with st.spinner("Calibrating second camera..."):
-                    ret2, K2, dist2, rvecs2, tvecs2 = calibrate_camera_from_video(
-                     url2, checkerboard_width, checkerboard_height, square_size
-                )
-           
-                recalibration_done = True  # Mark recalibration as done
-                movement2 = False
-                movement1 = False 
-                if not ret1 or not ret2:
-                    st.error("Erreur lors de la recalibration.")
-                    break
-                elif not movement1 and not movement2:
-                    recalibration_done = False  # Reset the flag when no movement is detectedq
-            
             if detection_method == 'Color-based Detection':
                 # Process frames (color conversion, blurring, detection, etc.)
                 hsv1 = bgr_to_hsv(frame1)
@@ -477,7 +480,7 @@ def position_page():
                     center2, radius2 = min_enclosing_circle(contours2[0])
 
                     # Use new threshold to detect the object
-                    if radius1 > 400 and radius2 > 400:
+                    if radius1 > 40 and radius2 > 40:
                         # Dessiner le cercle sur l'image
                         cv2.circle(frame1, center1, radius1, (255, 0, 0), 2)  # Cercle vert
                         cv2.putText(frame1, "Objet detecte dans la camera 1 ", (center1[0] - 50, center1[1] - 10),
@@ -489,58 +492,49 @@ def position_page():
                         cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 0), 2)
                 
                     
+                   # Validation de l'écart vertical entre les caméras
+                    if center1 is not None and center2 is not None:
+                        if not validate_y_coordinates(center1, center2):
+                            continue
+                        
 
-                    # Validation de l'écart vertical entre les caméras
-                    if validate_y_coordinates(center1, center2):
-                        st.write("Les coordonnées y sont similaires.")
-                    else:
-                        st.write("Les coordonnées y ne sont pas similaires.Skipping calculations.")
-                        continue
-                    
-                    # Calcul de la position 3D
-                    points_3d = calculate_3d_position(
-                       center1, center2, K1, K2, rvecs1[0], tvecs1[0], rvecs2[0], tvecs2[0]
-                    )
-                    st.write(f"Position 3D estimée : {points_3d}")
-
-                    # Calcul et affichage de l'écart horizontal
-                    horizontal_displacement = calculate_horizontal_displacement(center1, center2)
-                    st.write(f"Écart horizontal entre les centres : {horizontal_displacement} pixels")
-
-                    # Afficher les résultats
-                    cv2.circle(frame1, tuple(map(int, center1)), int(radius1), (0, 255, 0), 2)
-                    cv2.circle(frame2, tuple(map(int, center2)), int(radius2), (0, 255, 0), 2)
+                        points_3d = calculate_3d_position(center1, center2, K1, K2, rvecs1[0], tvecs1[0], rvecs2[0], tvecs2[0])
+                        horizontal_displacement = calculate_horizontal_displacement(center1, center2)
+                        points_3d_placeholder.write(f"**3D Position:** {points_3d}")
+                        displacement_placeholder.write(f"**Horizontal Displacement:** {horizontal_displacement} pixels")
+                        cv2.circle(frame1, tuple(map(int, center1)), int(radius1), (0, 255, 0), 2)
+                        cv2.circle(frame2, tuple(map(int, center2)), int(radius2), (0, 255, 0), 2)
             
+
+                    
             elif detection_method == 'MobileNet SSD Detection':
                 frame1, centers1 = detect_objects_mobinet(frame1, model , class_names)
                 frame2, centers2 = detect_objects_mobinet(frame2, model , class_names)
 
                 if centers1[0] and centers2[0] and centers1[1] and centers2[1]:
-                    if validate_y_coordinates(centers1, centers2):
-                        st.write("Les coordonnées y sont similaires.")
-                    else:
-                        st.write("Les coordonnées y ne sont pas similaires.Skipping calculations.")
+                    if not validate_y_coordinates(centers1, centers2):
+                        #st.error("Les coordonnées y ne sont pas similaires. Skipping calculations.")
                         continue
+    
+                            
 
                     points_3d = calculate_3d_position(centers1, centers2, K1, K2, rvecs1[0], tvecs1[0], rvecs2[0], tvecs2[0])
-                    st.write(f"Position 3D estimée : {points_3d}")
-
-                    # Calcul et affichage de l'écart horizontal
                     horizontal_displacement = calculate_horizontal_displacement(centers1, centers2)
-                    st.write(f"Écart horizontal entre les centres : {horizontal_displacement} pixels")
-                else:
-                    st.write("No object detected in one or both cameras. Skipping calculations.")
-            
-            # Update previous frames
-            previous_frame1 = frame1.copy()
-            previous_frame2 = frame2.copy()
+                    points_3d_placeholder.write(f"**3D Position:** {points_3d}")
+                    displacement_placeholder.write(f"**Horizontal Displacement:** {horizontal_displacement} pixels")
+
+    
+        
                 
 
-            stframe1.image(frame1, channels="BGR")
-            stframe2.image(frame2, channels="BGR")
+            #stframe1.image(frame1, channels="BGR")
+            #stframe2.image(frame2, channels="BGR")
+            
+            cv2.imshow('Caméra 1', frame1)
+            cv2.imshow('Caméra 2', frame2)
 
            
-            if stop:
+            if cv2.waitKey(10) & 0xFF == ord('q'):
                 cap1.release()
                 cap2.release()
                 cv2.destroyAllWindows()

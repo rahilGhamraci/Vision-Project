@@ -1,5 +1,5 @@
 '''
-Ce fichier contient le code pour le calibrage de la caméra qui ce  fait en utilisant le parallelisme (threads) 
+Ce fichier contient le code pour le calibrage de la caméra en  utilisant la notion parallelisme (threads) 
 il est presenté dans l'interface dans la page calibration_page()
 mais a été simplifié avant etre utilisé dans la partie 3 
 

@@ -1,3 +1,8 @@
+'''
+Ce fichier contient le code pour la détection d'un objet en utilisant le modèle mobinet ssd
+
+'''
+
 import cv2
 
 # Chemin vers les fichiers du modèle MobileNet-SSD

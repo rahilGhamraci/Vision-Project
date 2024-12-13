@@ -1,3 +1,9 @@
+'''
+Ce fichier contient le code de la partie 3 :
+calcul de la postion 3D ,en utilisant la detection par couleurs de l'objet
+
+'''
+
 import cv2
 import numpy as np
 
