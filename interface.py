@@ -9,7 +9,7 @@ from collections import deque
 
 from part1V1 import bgr_to_hsv, in_range, find_contours, min_enclosing_circle, gaussian_blur
 from part3V1 import calculate_3d_position, detect_camera_movement, calculate_mid_point, calculate_horizontal_displacement,validate_y_coordinates
-from part3V2 import load_model,detect_objects_mobinet
+from part3V2 import load_model,detect_objects_mobinet,transform_to_new_origin
 #.............................................................................................
 def home_page():
     st.title("Home Page")
@@ -116,8 +116,8 @@ def processing_thread(queue_in, queue_out, checkerboard_width, checkerboard_heig
     objp[:, :2] = np.mgrid[0:checkerboard_width, 0:checkerboard_height].T.reshape(-1, 2)
     objp *= square_size
 
-    objpoints = []  # Store 3D points
-    imgpoints = []  # Store corresponding 2D points
+    objpoints = []  # Sauvgarder les points 3D 
+    imgpoints = []  # Sauvgarder les points 2D correspondants
     criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 30, 0.001)
 
     calibrated = False
@@ -127,24 +127,24 @@ def processing_thread(queue_in, queue_out, checkerboard_width, checkerboard_heig
         if not queue_in.empty():
             frame_resized, gray = queue_in.get()
 
-            # Always detect corners for visualization
+            # Détéction du checkerboard
             ret, corners = cv2.findChessboardCorners(gray, (checkerboard_width, checkerboard_height), None)
             if ret:
                 corners2 = cv2.cornerSubPix(gray, corners, (11, 11), (-1, -1), criteria)
                 frame_resized = cv2.drawChessboardCorners(frame_resized, (checkerboard_width, checkerboard_height), corners2, ret)
 
-            # Perform calibration if motion is detected or first run
+            # Faire le calibrage pour la première fois ou en cas de mouvement 
             if (motion_detected_event.is_set() or not calibrated) and ret:
                 
                 imgpoints.append(corners2)
                 objpoints.append(objp)
 
-                if len(objpoints) >= 10:  # Adjust threshold as needed
+                if len(objpoints) >= 10: 
                     ret, mtx, dist, rvecs, tvecs = cv2.calibrateCamera(objpoints, imgpoints, gray.shape[::-1], None, None)
                     if ret:
                         calibrated = True
                         motion_detected_event.clear()  # Reset motion detection
-                        # Send calibration results to the queue
+                        # Envoyer les résultats du calibrage à la file
                         params = {
                             "ret": ret,
                             "camera_matrix": mtx.tolist(),
@@ -154,7 +154,7 @@ def processing_thread(queue_in, queue_out, checkerboard_width, checkerboard_heig
                         }
                         queue_out.put((frame_resized, params))
 
-            # Always send the processed frame for visualization
+            # Envoyer la frame pour visualisation 
             queue_out.put((frame_resized, None))
 
 
@@ -186,7 +186,7 @@ def calibration_page():
             "square_size": square_size
         }
 
-        # Queues for threading
+        # File pour la communication entre les threads 
         queue_in = queue.Queue()
         queue_out = queue.Queue()
 
@@ -196,7 +196,7 @@ def calibration_page():
         kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
         motion_levels = deque(maxlen=5)  # Rolling average for motion stabilization
 
-        # Start the processing thread
+        # Lancement du thread qui s'occupe des calculs du calibrage 
         thread = threading.Thread(target=processing_thread,
                                   args=(queue_in, queue_out, checkerboard_width, checkerboard_height, square_size, motion_detected_event))
         thread.daemon = True
@@ -222,39 +222,39 @@ def calibration_page():
             frame_resized = cv2.resize(frame, (600, 400))
             gray = cv2.cvtColor(frame_resized, cv2.COLOR_BGR2GRAY)
 
-            # Skip motion detection on the first frame
+            # Ignorer la detection de mouvement pour la prmière frame récupérée
             if prev_gray_frame is None:
                 prev_gray_frame = gray
                 continue
 
-            # Detect motion using absolute difference
+            # Detecetr le mouvement en utilisant la diffrence entre les frames 
             diff_frame = cv2.absdiff(prev_gray_frame, gray)
             _, diff_thresh = cv2.threshold(diff_frame, 25, 255, cv2.THRESH_BINARY)
 
-            # Remove noise using morphological operations
+            # Enlever le bruit en utilisant les operations morphologiques 
             motion_mask = motion_detector.apply(gray)
             motion_mask_cleaned = cv2.morphologyEx(motion_mask, cv2.MORPH_OPEN, kernel)
 
-            # Calculate motion level and apply a rolling average
+            # Calcul du niveau du mouvement et la moyenne de ce dernier 
             motion_level = np.sum(motion_mask_cleaned) / motion_mask_cleaned.size
             motion_levels.append(motion_level)
             average_motion = sum(motion_levels) / len(motion_levels)
 
-            # Trigger motion detected event if above threshold
-            if average_motion > 0.1:  # Adjust this threshold as needed
+            # Détécter les mouvements 
+            if average_motion > 0.1:  
                 motion_detected_event.set()
 
-            # Send frame for processing
+            # Envoyer la frame au thread pour faire les calculs 
             queue_in.put((frame_resized, gray))
 
-            # Display processed frame with corners
+            # Afficher l'image avec les corners du cherboard 
             if not queue_out.empty():
                 processed_frame, calibration_params = queue_out.get()
                 
                 cv2.imshow('calibrage', processed_frame)
 
 
-                # Display calibration results if available
+                # Affichage des informations du calibrage 
                 if calibration_params:
                     
                     ret1_holder.write(f"**Ret**: {calibration_params['ret']}")
@@ -368,7 +368,8 @@ def position_page():
          
         manager = Manager()
         calibration_results = manager.dict()
-
+        
+        #utilisation des processus pour calibrer les deux caméras en meme temps 
         process1 = Process(target=calibrate_and_store, args=("Camera 1", url1, checkerboard_width, checkerboard_height, square_size, calibration_results))
         process2 = Process(target=calibrate_and_store, args=("Camera 2", url2, checkerboard_width, checkerboard_height, square_size, calibration_results))
 
@@ -432,17 +433,19 @@ def position_page():
 
         st.subheader("Position Estimation")
         points_3d_placeholder = st.empty()
+        new_origin_placeholder = st.empty()
         displacement_placeholder = st.empty()
+        points_3d_transformed_placeholder = st.empty()
 
  
         if detection_method == "MobileNet SSD Detection":
-            # Load MobileNet SSD model
+            # Chargement du modèle SSD 
             with st.spinner("Loading Mobinet ssd model..."):
                 model = load_model(prototxt_path, model_path)
         while True:
             frame_count += 1
 
-            # Skip frames
+            # Ignorer certains frames pour palier au problème de latence
             if frame_count % frame_skip != 0:
                 continue
 
@@ -471,7 +474,7 @@ def position_page():
                 contours2 = find_contours(mask2)
 
                 if contours1 and contours2:
-                    # Sort contours by area
+                    # Trie des contours
                     contours1 = sorted(contours1, key=cv2.contourArea, reverse=True)
                     contours2 = sorted(contours2, key=cv2.contourArea, reverse=True)
 
@@ -479,7 +482,7 @@ def position_page():
                     center1, radius1 = min_enclosing_circle(contours1[0])
                     center2, radius2 = min_enclosing_circle(contours2[0])
 
-                    # Use new threshold to detect the object
+                    # un seuil pour determiner si il s'agit d'un objet qu'on doit détécter ou pas
                     if radius1 > 40 and radius2 > 40:
                         # Dessiner le cercle sur l'image
                         cv2.circle(frame1, center1, radius1, (255, 0, 0), 2)  # Cercle vert
@@ -500,8 +503,18 @@ def position_page():
 
                         points_3d = calculate_3d_position(center1, center2, K1, K2, rvecs1[0], tvecs1[0], rvecs2[0], tvecs2[0])
                         horizontal_displacement = calculate_horizontal_displacement(center1, center2)
+                        # Calcul du nouveau origine (milieu entre les caméras)
+                        new_origin = calculate_mid_point(tvecs1[0], tvecs2[0])
+                        # Transformation des coordonnées 3D vers le nouveau origine
+                        points_3d_transformed = transform_to_new_origin(points_3d, new_origin)
+                        
+       
                         points_3d_placeholder.write(f"**3D Position:** {points_3d}")
                         displacement_placeholder.write(f"**Horizontal Displacement:** {horizontal_displacement} pixels")
+                        new_origin_placeholder.write(f"**New origin:** {new_origin}")
+                        points_3d_transformed_placeholder.write(f"**3D Position (nouvel origin):** {points_3d_transformed}")
+                        
+
                         cv2.circle(frame1, tuple(map(int, center1)), int(radius1), (0, 255, 0), 2)
                         cv2.circle(frame2, tuple(map(int, center2)), int(radius2), (0, 255, 0), 2)
             
@@ -520,15 +533,21 @@ def position_page():
 
                     points_3d = calculate_3d_position(centers1, centers2, K1, K2, rvecs1[0], tvecs1[0], rvecs2[0], tvecs2[0])
                     horizontal_displacement = calculate_horizontal_displacement(centers1, centers2)
+                    # Calcul du nouveau origine (milieu entre les caméras)
+                    new_origin = calculate_mid_point(tvecs1[0], tvecs2[0])
+                    # Transformation des coordonnées 3D vers le nouveau origine
+                    points_3d_transformed = transform_to_new_origin(points_3d, new_origin)
+                        
+       
                     points_3d_placeholder.write(f"**3D Position:** {points_3d}")
                     displacement_placeholder.write(f"**Horizontal Displacement:** {horizontal_displacement} pixels")
+                    new_origin_placeholder.write(f"**New origin:** {new_origin}")
+                    points_3d_transformed_placeholder.write(f"**3D Position (nouvel origin):** {points_3d_transformed}")
+                    
 
     
         
                 
-
-            #stframe1.image(frame1, channels="BGR")
-            #stframe2.image(frame2, channels="BGR")
             
             cv2.imshow('Caméra 1', frame1)
             cv2.imshow('Caméra 2', frame2)
@@ -540,10 +559,120 @@ def position_page():
                 cv2.destroyAllWindows()
                 break
 
-    
+#..................................................................
+from deep_sort_realtime.deepsort_tracker import DeepSort # to use the model of track 
+from ultralytics import YOLO # to use yolo to track
+
+def load_yolo_model(path ="yolo-Weights/yolov5n.pt"):
+
+    model = YOLO(path) 
+    classNames = model.names  
+   
+    return model, classNames
 
 def improuvemenets_page():
     st.title("Improuvement Page")
+    #url = st.text_input("Enter the first video stream URL:", "http://192.168.137.234:8080/video")
+
+    object_tracker = DeepSort()
+    
+
+    # just take the index of the object we want to detect , in our case , cell phone => 67
+    phone_class_index = 67  
+
+    cap = cv2.VideoCapture(0)
+    cap.set(3, 640)  
+    cap.set(4, 480)  
+
+    if st.button("Start Detecting", key="start_detecting"):
+        with st.spinner("Loading Yolo model..."):
+            model, classNames = load_yolo_model()
+    
+        while cap.isOpened():
+            success, img = cap.read()
+
+            if not success:
+                break
+ 
+            results = model(img, stream=True)
+
+
+            detections = []
+
+            for r in results:
+                # retrieve the box detection result of all objects 
+                boxes = r.boxes
+                # this to only detect a phone 
+                # iterate all the boxes 
+                for box in boxes:
+                    # retrieve the classe of detection 
+                    cls = int(box.cls[0])  
+
+                    # If the detected class is 'cell phone'
+                    
+                    if cls == phone_class_index:
+                        
+                        x1, y1, x2, y2 = box.xyxy[0]
+               
+                        x1, y1, x2, y2 = int(x1), int(y1), int(x2), int(y2)
+
+                        # Calculate the center of the bounding box
+                        center_x = (x1 + x2) // 2
+                        center_y = (y1 + y2) // 2
+
+                        # Add detection to list for DeepSORT (bbox, confidence, class)
+                        detections.append(([x1, y1, x2, y2], box.conf[0], cls))
+
+                        # DISPLAY 
+              
+                        # Draw bounding box 
+                        cv2.rectangle(img, (x1, y1), (x2, y2), (255, 0, 255), 3)
+                        cv2.circle(img, (center_x, center_y), 5, (0, 255, 0), -1) 
+                
+                        # Display the center position as text on the webcam
+                        center_text = f"Center: ({center_x}, {center_y})"
+                        org = (x1, y1 - 10)  
+                        font = cv2.FONT_HERSHEY_SIMPLEX
+                        fontScale = 0.7
+                        color = (0, 255, 0)
+                        thickness = 2
+              
+                        cv2.putText(img, center_text, org, font, fontScale, color, thickness)
+
+
+            tracks = object_tracker.update_tracks(detections, frame=img)
+
+            # Draw a moving dot for each track (phone)
+            for track in tracks:
+
+                if not track.is_confirmed():
+                        continue
+                track_id = track.track_id
+                ltrb = track.to_ltrb()
+
+                # Calculate the center of the bounding box for the dot
+                center_x = int((ltrb[0] + ltrb[2]) // 2)
+                center_y = int((ltrb[1] + ltrb[3]) // 2)
+
+                # Draw the dot at the center of the tracked phone object
+                cv2.circle(img, (center_x, center_y), 5, (0, 0, 255), -1)  # Red dot for tracking
+
+    
+
+             # Display the image on webcam with all the added displays 
+            cv2.imshow('Webcam', img)
+
+            # press q to quit 
+            if cv2.waitKey(10) & 0xFF == ord('q'):
+                cap.release()
+                cv2.destroyAllWindows()
+                break
+
+
+
+
+
+
     
 
 

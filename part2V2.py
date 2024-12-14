@@ -2,6 +2,8 @@
 Ce fichier contient le code pour le calibrage de la caméra 
 qui est utilisé dans la partie 3 
 
+RM : c un code simplifié par rapport à part2V1
+
 '''
 
 

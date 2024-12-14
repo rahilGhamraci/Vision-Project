@@ -2,6 +2,9 @@
 Ce fichier contient le code de la partie 3 :
 calcul de la postion 3D , en utilisant mobinet ssd pour la detection de l'objet
 
+RM : ce code a subit des modifications avant etre intégré dans l'interface:
+- ajout des processus pour calibrer les deux caméras en meme temps 
+
 '''
 
 import cv2
@@ -60,10 +63,6 @@ def detect_objects_mobinet(frame, model,class_names, target_class = "bottle"):
     return frame, ( cx, cy )
         
 
-      
-
-
-
 # PARTIE 2 : Calibration de la caméra
 from part2V2 import calibrate_camera_from_video
 
@@ -81,29 +80,45 @@ def calculate_3d_position(p1, p2, K1, K2, rvec1, tvec1, rvec2, tvec2):
     points_3d = points_4d[:3] / points_4d[3]
     return points_3d.T
 
+def transform_to_new_origin(points_3d, new_origin):
+    """
+    Transforme les coordonnées 3D pour les exprimer dans un nouveau système de coordonnées
+    dont l'origine est définie par 'new_origin'.
+
+    Arguments :
+    points_3d (np.ndarray) : Coordonnées 3D des points dans le système actuel.
+    new_origin (np.ndarray) : Coordonnées de la nouvelle origine dans le système actuel.
+
+    Retourne :
+    np.ndarray : Coordonnées 3D transformées.
+    """
+    # Assurer que les coordonnées sont des tableaux 1D
+    points_3d = np.asarray(points_3d).flatten()
+    new_origin = np.asarray(new_origin).flatten()
+    return points_3d - new_origin
+
 def detect_camera_movement(previous_frame, current_frame, change_ratio_threshold=0.01):
     """
-    Detects significant movement of the camera by comparing two frames.
-    Ignores minor differences caused by noise or natural shaking.
+    Détecte un mouvement significatif de la caméra en comparant deux images successives.
+    Ignore les différences mineures causées par le bruit ou des vibrations naturelles.
     """
-    # Compute absolute difference
+    # Calcul de la différence absolue
     diff = cv2.absdiff(previous_frame, current_frame)
 
-    # Convert to grayscale and apply Gaussian blur to reduce noise
+    # Conversion en niveaux de gris et application d'un flou gaussien pour réduire le bruit
     gray_diff = cv2.cvtColor(diff, cv2.COLOR_BGR2GRAY)
     gray_diff = cv2.GaussianBlur(gray_diff, (5, 5), 0)
 
-    # Apply a stricter binary threshold
+    # Application d'un seuil binaire stricte
     _, thresh = cv2.threshold(gray_diff, 50, 255, cv2.THRESH_BINARY)
 
-    # Count non-zero pixels and compute the change ratio
+    # Comptage des pixels non zéro et calcul du ratio de changement
     non_zero_count = cv2.countNonZero(thresh)
     frame_area = gray_diff.shape[0] * gray_diff.shape[1]
     change_ratio = non_zero_count / frame_area
 
     print(f"Non-zero count: {non_zero_count}, Change ratio: {change_ratio:.5f}")
     return change_ratio > change_ratio_threshold
-
 
 def calculate_mid_point(tvec1, tvec2):
     """
@@ -117,8 +132,6 @@ def calculate_horizontal_displacement(center1, center2):
     """
     Calcule l'écart horizontal (b) entre les deux centres des objets dans les deux vues de caméra.
     """
-    print('center 1 y',center1)
-    print('center 1 y',center1)
     return abs(center1[0] - center2[0])
 
 # Fonction pour valider si les coordonnées y sont similaires dans les deux caméras
@@ -126,8 +139,6 @@ def validate_y_coordinates(center1, center2, tolerance=5):
     """
     Vérifie si les coordonnées y des deux centres sont identiques dans un certain seuil de tolérance.
     """
-    print('center 1 y',center1[1])
-    print('center 1 y',center2[1])
     return abs(center1[1] - center2[1]) <= tolerance
 
 
@@ -144,8 +155,8 @@ if(model):
     print('model for detection has been loaded')
 
 # Camera URLs
-PHONE_CAMERA_URL1 = "http://192.168.226.189:8080/video"
-PHONE_CAMERA_URL2 = "http://192.168.226.189:8080/video"
+PHONE_CAMERA_URL1 = "http://192.168.137.234:8080/video"
+PHONE_CAMERA_URL2 = "http://192.168.137.234:8080/video"
 
 # Initial Calibration
 ret1, K1, dist1, rvecs1, tvecs1 = calibrate_camera_from_video(PHONE_CAMERA_URL1, rows, cols, square_size)
@@ -235,6 +246,13 @@ while True:
 
         points_3d = calculate_3d_position(centers1, centers2, K1, K2, rvecs1[0], tvecs1[0], rvecs2[0], tvecs2[0])
         print(f"Position 3D estimée : {points_3d}")
+
+        # Calcul de la nouvelle origine (milieu entre les caméras)
+        new_origin = calculate_mid_point(tvecs1[0], tvecs2[0])
+
+        # Transformation des coordonnées 3D vers la nouvelle origine
+        points_3d_transformed = transform_to_new_origin(points_3d, new_origin)
+        print(f"Position 3D (nouvelle origine) : {points_3d_transformed}")
 
         # Calcul et affichage de l'écart horizontal
         horizontal_displacement = calculate_horizontal_displacement(centers1, centers2)

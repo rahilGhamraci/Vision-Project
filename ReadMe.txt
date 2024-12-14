@@ -1,6 +1,7 @@
 1. Installation des bibliothèques nécessaires
 
-pip install streamlit
+pip install streamlit // interface 
+pip install deep_sort_realtime // amelioration
 pip install  queue
 pip install  threading
 pip install  time
