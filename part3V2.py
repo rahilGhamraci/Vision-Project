@@ -2,13 +2,11 @@
 Ce fichier contient le code de la partie 3 :
 calcul de la postion 3D , en utilisant mobinet ssd pour la detection de l'objet
 
-RM : ce code a subit des modifications avant etre intégré dans l'interface:
-- ajout des processus pour calibrer les deux caméras en meme temps 
-
 '''
 
 import cv2
 import numpy as np
+from multiprocessing import Process, Manager
 
 
 # PARTIE 1 : Detection de l'objet en utilisant le modele YOLO
@@ -141,140 +139,158 @@ def validate_y_coordinates(center1, center2, tolerance=5):
     """
     return abs(center1[1] - center2[1]) <= tolerance
 
+def calibrate_and_store(camera_name, camera_source, checkerboard_width, checkerboard_height, square_size, results):
+    ret, K, dist, rvecs, tvecs = calibrate_camera_from_video(camera_name, camera_source, checkerboard_width, checkerboard_height, square_size)
+    results[camera_name] = {"ret": ret, "K": K, "dist": dist, "rvecs": rvecs, "tvecs": tvecs}
 
 #code pour tester la partie 3 dans le terminal 
 
 '''
-# Calibration Parameters
-rows = 7
-cols = 9
-square_size = 20  # en millimètres
+if __name__ == "__main__":
+    # Calibration Parameters
+    rows = 7
+    cols = 9
+    square_size = 20  # en millimètres
 
-model = load_model()
-if(model):
-    print('model for detection has been loaded')
+    model = load_model()
+    if(model):
+        print('model for detection has been loaded')
 
-# Camera URLs
-PHONE_CAMERA_URL1 = "http://192.168.137.234:8080/video"
-PHONE_CAMERA_URL2 = "http://192.168.137.234:8080/video"
+    # Camera URLs
+    PHONE_CAMERA_URL1 = "http://192.168.100.122:8080/video"
+    PHONE_CAMERA_URL2 = "http://192.168.100.122:8080/video"
 
-# Initial Calibration
-ret1, K1, dist1, rvecs1, tvecs1 = calibrate_camera_from_video(PHONE_CAMERA_URL1, rows, cols, square_size)
-ret2, K2, dist2, rvecs2, tvecs2 = calibrate_camera_from_video(PHONE_CAMERA_URL2, rows, cols, square_size)
-if not ret1 or not ret2:
-    print("Erreur lors de la calibration des caméras.")
-    exit(1)
+    manager = Manager()
+    calibration_results = manager.dict()
 
-# Camera Initialization
-cap1 = cv2.VideoCapture(PHONE_CAMERA_URL1)
-cap2 = cv2.VideoCapture(PHONE_CAMERA_URL2)
+    #utilisation des processus pour calibrer les deux caméras en meme temps 
+    process1 = Process(target=calibrate_and_store, args=("Camera 1", PHONE_CAMERA_URL1, rows, cols, square_size, calibration_results))
+    process2 = Process(target=calibrate_and_store, args=("Camera 2", PHONE_CAMERA_URL2, rows, cols, square_size, calibration_results))
+
+    process1.start()
+    process2.start()
+
+    process1.join()
+    process2.join()
+
+    cam1_results = calibration_results.get("Camera 1", {})
+    cam2_results = calibration_results.get("Camera 2", {})
+
+    if cam1_results["ret"] is None or cam2_results["ret"] is None:
+            print("Calibration failed for one or both cameras.")
+            exit(1)
+
+    print("Calibration completed for both cameras!")
+
+    ret1, K1, dist1, rvecs1, tvecs1 = cam1_results['ret'] , cam1_results['K'], cam1_results['dist'], cam1_results['rvecs'], cam1_results['tvecs']
+    ret2, K2, dist2, rvecs2, tvecs2 = cam2_results['ret'] , cam2_results['K'], cam2_results['dist'], cam2_results['rvecs'], cam2_results['tvecs']
 
 
+    # Camera Initialization
+    cap1 = cv2.VideoCapture(PHONE_CAMERA_URL1)
+    cap2 = cv2.VideoCapture(PHONE_CAMERA_URL2)
+
+    if not cap1.isOpened() or not cap2.isOpened():
+      
+      print("Erreur lors de l'ouverture des caméras.")
+      exit(1)
 
 
+    # Frame skipping
+    frame_skip = 5  
+    frame_count = 0
 
-if not cap1.isOpened() or not cap2.isOpened():
-    print("Erreur lors de l'ouverture des caméras.")
-    exit(1)
+    previous_frame1 = None
+    previous_frame2 = None
 
+    movement2 = False
+    movement1 = False
 
-# Frame skipping
-frame_skip = 5  
-frame_count = 0
+    # Flag pour le suivi du calibrage
+    recalibration_done = False
 
-previous_frame1 = None
-previous_frame2 = None
-
-movement2 = False
-movement1 = False
-
-# Flag pour le suivi du calibrage
-recalibration_done = False
-
-class_names = [
-    "background", "aeroplane", "bicycle", "bird", "boat",
+    class_names = [
+      "background", "aeroplane", "bicycle", "bird", "boat",
     "bottle", "bus", "car", "cat", "chair", "cow",
     "diningtable", "dog", "horse", "motorbike", "person",
     "pottedplant", "sheep", "sofa", "train", "tvmonitor"
-]
+    ]
 
 
 
 
-while True:
-    frame_count += 1
+    while True:
+        frame_count += 1
 
-    # Skip frames
-    if frame_count % frame_skip != 0:
-        continue
-
-    ret1, frame1 = cap1.read()
-    ret2, frame2 = cap2.read()
-
-    if not ret1 or not ret2:
-        print("Erreur lors de la lecture des caméras.")
-        break
-
-    if previous_frame1 is not None and previous_frame2 is not None:
-        movement1 = detect_camera_movement(previous_frame1, frame1, change_ratio_threshold=0.4)
-        movement2 = detect_camera_movement(previous_frame2, frame2, change_ratio_threshold=0.4)
-
-        if (movement1 or movement2) and not recalibration_done:
-            print("Mouvement détecté. Recalibration des caméras...")
-            ret1, K1, dist1, rvecs1, tvecs1 = calibrate_camera_from_video(PHONE_CAMERA_URL1, rows, cols, square_size)
-            ret2, K2, dist2, rvecs2, tvecs2 = calibrate_camera_from_video(PHONE_CAMERA_URL2, rows, cols, square_size)
-            recalibration_done = True  # Mark recalibration as done
-            movement2 = False
-            movement1 = False 
-            if not ret1 or not ret2:
-                print("Erreur lors de la recalibration.")
-                break
-        elif not movement1 and not movement2:
-            recalibration_done = False  # Reset the flag when no movement is detectedq
-
-    frame1, centers1 = detect_objects_mobinet(frame1, model , class_names)
-    frame2, centers2 = detect_objects_mobinet(frame2, model , class_names)
-
-    if centers1[0] and centers2[0] and centers1[1] and centers2[1]:
-        
-
-        if validate_y_coordinates(centers1, centers2):
-            print("Les coordonnées y sont similaires.")
-        else: 
-            print("Les coordonnées y ne sont pas similaires.")
+        # Skip frames
+        if frame_count % frame_skip != 0:
             continue
 
-        points_3d = calculate_3d_position(centers1, centers2, K1, K2, rvecs1[0], tvecs1[0], rvecs2[0], tvecs2[0])
-        print(f"Position 3D estimée : {points_3d}")
+        ret1, frame1 = cap1.read()
+        ret2, frame2 = cap2.read()
 
-        # Calcul de la nouvelle origine (milieu entre les caméras)
-        new_origin = calculate_mid_point(tvecs1[0], tvecs2[0])
+        if not ret1 or not ret2:
+            print("Erreur lors de la lecture des caméras.")
+            break
 
-        # Transformation des coordonnées 3D vers la nouvelle origine
-        points_3d_transformed = transform_to_new_origin(points_3d, new_origin)
-        print(f"Position 3D (nouvelle origine) : {points_3d_transformed}")
+        if previous_frame1 is not None and previous_frame2 is not None:
+            movement1 = detect_camera_movement(previous_frame1, frame1, change_ratio_threshold=0.4)
+            movement2 = detect_camera_movement(previous_frame2, frame2, change_ratio_threshold=0.4)
 
-        # Calcul et affichage de l'écart horizontal
-        horizontal_displacement = calculate_horizontal_displacement(centers1, centers2)
-        print(f"Écart horizontal entre les centres : {horizontal_displacement} pixels")
-    else:
-        print("No object detected in one or both cameras. Skipping calculations.")
+            if (movement1 or movement2) and not recalibration_done:
+                print("Mouvement détecté. Recalibration des caméras...")
+                ret1, K1, dist1, rvecs1, tvecs1 = calibrate_camera_from_video(PHONE_CAMERA_URL1, rows, cols, square_size)
+                ret2, K2, dist2, rvecs2, tvecs2 = calibrate_camera_from_video(PHONE_CAMERA_URL2, rows, cols, square_size)
+                recalibration_done = True  # Mark recalibration as done
+                movement2 = False
+                movement1 = False
+                if not ret1 or not ret2:
+                    print("Erreur lors de la recalibration.")
+                    break
+            elif not movement1 and not movement2:
+                recalibration_done = False  # Reset the flag when no movement is detectedq
+
+        frame1, centers1 = detect_objects_mobinet(frame1, model , class_names)
+        frame2, centers2 = detect_objects_mobinet(frame2, model , class_names)
+
+        if centers1[0] and centers2[0] and centers1[1] and centers2[1]:
+            if validate_y_coordinates(centers1, centers2):
+                print("Les coordonnées y sont similaires.")
+            else:
+                print("Les coordonnées y ne sont pas similaires.")
+                continue
+
+            points_3d = calculate_3d_position(centers1, centers2, K1, K2, rvecs1[0], tvecs1[0], rvecs2[0], tvecs2[0])
+            print(f"Position 3D estimée : {points_3d}")
+
+            # Calcul de la nouvelle origine (milieu entre les caméras)
+            new_origin = calculate_mid_point(tvecs1[0], tvecs2[0])
+
+            # Transformation des coordonnées 3D vers la nouvelle origine
+            points_3d_transformed = transform_to_new_origin(points_3d, new_origin)
+            print(f"Position 3D (nouvelle origine) : {points_3d_transformed}")
+
+             # Calcul et affichage de l'écart horizontal
+            horizontal_displacement = calculate_horizontal_displacement(centers1, centers2)
+            print(f"Écart horizontal entre les centres : {horizontal_displacement} pixels")
+        else:
+            print("No object detected in one or both cameras. Skipping calculations.")
 
     
    
-    # Update previous frames
-    previous_frame1 = frame1.copy()
-    previous_frame2 = frame2.copy()
+        # Update previous frames
+        previous_frame1 = frame1.copy()
+        previous_frame2 = frame2.copy()
 
    
-    cv2.imshow('Caméra 1', frame1)
-    cv2.imshow('Caméra 2', frame2)
+        cv2.imshow('Caméra 1', frame1)
+        cv2.imshow('Caméra 2', frame2)
 
-    if cv2.waitKey(1) & 0xFF == ord('q'):
-        break
+        if cv2.waitKey(1) & 0xFF == ord('q'):
+            break
 
-cap1.release()
-cap2.release()
-cv2.destroyAllWindows()
+    cap1.release()
+    cap2.release()
+    cv2.destroyAllWindows()
 
 '''

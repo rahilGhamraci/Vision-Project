@@ -19,7 +19,7 @@ def generate_checkerboard_points(rows, cols, square_size):
     return points_3D
 
 # Fonction pour effectuer la calibration en temps réel pour une caméra donnée
-def calibrate_camera_from_video(camera_source, rows, cols, square_size):
+def calibrate_camera_from_video(name,camera_source, rows, cols, square_size):
     cap = cv2.VideoCapture(camera_source)
     if not cap.isOpened():
         print(f"Erreur d'ouverture de la caméra {camera_source}.")
@@ -46,9 +46,10 @@ def calibrate_camera_from_video(camera_source, rows, cols, square_size):
             cv2.drawChessboardCorners(frame, (cols, rows), corners, ret)
 
         frameNEw =  cv2.resize(frame, (640, 480))
-        cv2.imshow("Calibration", frameNEw)
+        cv2.imshow(name, frameNEw)
         if len(img_points) >= 10:  # 10 images minimum pour la calibration
             print("Calibration prête !")
+            ret, K, dist, rvecs, tvecs = cv2.calibrateCamera(obj_points, img_points, gray.shape[::-1], None, None)
             break
         
         if cv2.waitKey(1) & 0xFF == ord('q'):
@@ -60,7 +61,7 @@ def calibrate_camera_from_video(camera_source, rows, cols, square_size):
         return False, None, None, None, None
 
     # Effectuer la calibration
-    ret, K, dist, rvecs, tvecs = cv2.calibrateCamera(obj_points, img_points, gray.shape[::-1], None, None)
+    
     return ret, K, dist, rvecs, tvecs
 
 """

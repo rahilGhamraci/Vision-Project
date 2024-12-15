@@ -9,6 +9,7 @@ RM : ce code a subit des modifications avant etre intégré dans l'interface:
 
 import cv2
 import numpy as np
+from multiprocessing import Process, Manager
 
 # PARTIE 1 : Conversion, détection de couleur et flou
 from part1V1 import bgr_to_hsv, in_range, find_contours, min_enclosing_circle, gaussian_blur
@@ -91,120 +92,135 @@ def validate_y_coordinates(center1, center2, tolerance=5):
     """
     return abs(center1[1] - center2[1]) <= tolerance
 
+def calibrate_and_store(camera_name, camera_source, checkerboard_width, checkerboard_height, square_size, results):
+    ret, K, dist, rvecs, tvecs = calibrate_camera_from_video(camera_name, camera_source, checkerboard_width, checkerboard_height, square_size)
+    results[camera_name] = {"ret": ret, "K": K, "dist": dist, "rvecs": rvecs, "tvecs": tvecs}
 
 #code pour tester la partie 3 dans le terminal 
 '''
 
-# Calibration Parameters
-rows = 7
-cols = 9
-square_size = 20  # en millimètres
-
-# Camera URLs
-PHONE_CAMERA_URL1 = "http://192.168.137.234:8080/video"
-PHONE_CAMERA_URL2 = "http://192.168.137.234:8080/video"
-
-# Initial Calibration
-ret1, K1, dist1, rvecs1, tvecs1 = calibrate_camera_from_video(PHONE_CAMERA_URL1, rows, cols, square_size)
-ret2, K2, dist2, rvecs2, tvecs2 = calibrate_camera_from_video(PHONE_CAMERA_URL2, rows, cols, square_size)
-if not ret1 or not ret2:
-    print("Erreur lors de la calibration des caméras.")
-    exit(1)
-
-# Camera Initialization
-cap1 = cv2.VideoCapture(PHONE_CAMERA_URL1)
-cap2 = cv2.VideoCapture(PHONE_CAMERA_URL2)
-
-frame_width1 = int(cap1.get(3))
-frame_height1 = int(cap1.get(4))
-
-frame_width2 = int(cap2.get(3))
-frame_height2 = int(cap2.get(4))
-
-fourcc = cv2.VideoWriter_fourcc('X','V','I','D')
-out1 = cv2.VideoWriter('output1.avi', fourcc, 30, (frame_width1, frame_height1))
-out2 = cv2.VideoWriter('output2.avi', fourcc, 30, (frame_width2, frame_height2))
-
-if not cap1.isOpened() or not cap2.isOpened():
-    print("Erreur lors de l'ouverture des caméras.")
-    exit(1)
-
-# 
-fps1 = int(cap1.get(cv2.CAP_PROP_FPS)) or 30  
-fps2 = int(cap2.get(cv2.CAP_PROP_FPS)) or 30
-wait_time = int(1000 / max(fps1, fps2))  
-
-# Frame skipping
-frame_skip = 5  
-frame_count = 0
-
-previous_frame1 = None
-previous_frame2 = None
-
-movement2 = False
-movement1 = False
-# Add a flag to track recalibration
-recalibration_done = False
+if __name__ == "__main__":
+    # Calibration Parameters
+    rows = 7
+    cols = 9
+    square_size = 20  # en millimètres
 
 
-while True:
-    frame_count += 1
 
-    # Skip frames
-    if frame_count % frame_skip != 0:
-        continue
+    # Camera URLs
+    PHONE_CAMERA_URL1 = "http://192.168.100.122:8080/video"
+    PHONE_CAMERA_URL2 = "http://192.168.100.122:8080/video"
 
-    ret1, frame1 = cap1.read()
-    ret2, frame2 = cap2.read()
+    manager = Manager()
+    calibration_results = manager.dict()
 
-    if not ret1 or not ret2:
-        print("Erreur lors de la lecture des caméras.")
-        break
+    #utilisation des processus pour calibrer les deux caméras en meme temps 
+    process1 = Process(target=calibrate_and_store, args=("Camera 1", PHONE_CAMERA_URL1, rows, cols, square_size, calibration_results))
+    process2 = Process(target=calibrate_and_store, args=("Camera 2", PHONE_CAMERA_URL2, rows, cols, square_size, calibration_results))
 
-    if previous_frame1 is not None and previous_frame2 is not None:
-        movement1 = detect_camera_movement(previous_frame1, frame1, change_ratio_threshold=0.4)
-        movement2 = detect_camera_movement(previous_frame2, frame2, change_ratio_threshold=0.4)
+    process1.start()
+    process2.start()
 
-        if (movement1 or movement2) and not recalibration_done:
-            print("Mouvement détecté. Recalibration des caméras...")
-            ret1, K1, dist1, rvecs1, tvecs1 = calibrate_camera_from_video(PHONE_CAMERA_URL1, rows, cols, square_size)
-            ret2, K2, dist2, rvecs2, tvecs2 = calibrate_camera_from_video(PHONE_CAMERA_URL2, rows, cols, square_size)
-            recalibration_done = True  # Mark recalibration as done
-            movement2 = False
-            movement1 = False 
-            if not ret1 or not ret2:
-                print("Erreur lors de la recalibration.")
-                break
-        elif not movement1 and not movement2:
-            recalibration_done = False  # Reset the flag when no movement is detectedq
+    process1.join()
+    process2.join()
 
-    # Process frames (color conversion, blurring, detection, etc.)
-    hsv1 = bgr_to_hsv(frame1)
-    hsv2 = bgr_to_hsv(frame2)
+    cam1_results = calibration_results.get("Camera 1", {})
+    cam2_results = calibration_results.get("Camera 2", {})
 
-    frame1_blurred = gaussian_blur(hsv1, 3)
-    frame2_blurred = gaussian_blur(hsv2, 3)
+    if cam1_results["ret"] is None or cam2_results["ret"] is None:
+            print("Calibration failed for one or both cameras.")
+            exit(1)
 
-    lower = np.array([35, 100, 50])
-    upper = np.array([85, 255, 255])
+    print("Calibration completed for both cameras!")
 
-    mask1 = in_range(frame1_blurred, lower, upper)
-    mask2 = in_range(frame2_blurred, lower, upper)
+    ret1, K1, dist1, rvecs1, tvecs1 = cam1_results['ret'] , cam1_results['K'], cam1_results['dist'], cam1_results['rvecs'], cam1_results['tvecs']
+    ret2, K2, dist2, rvecs2, tvecs2 = cam2_results['ret'] , cam2_results['K'], cam2_results['dist'], cam2_results['rvecs'], cam2_results['tvecs']
 
-    contours1 = find_contours(mask1)
-    contours2 = find_contours(mask2)
 
-    if contours1 and contours2:
-        # Sort contours by area
-        contours1 = sorted(contours1, key=cv2.contourArea, reverse=True)
-        contours2 = sorted(contours2, key=cv2.contourArea, reverse=True)
+    # Camera Initialization
+    cap1 = cv2.VideoCapture(PHONE_CAMERA_URL1)
+    cap2 = cv2.VideoCapture(PHONE_CAMERA_URL2)
 
-        # Trouver les cercles minimums
-        center1, radius1 = min_enclosing_circle(contours1[0])
-        center2, radius2 = min_enclosing_circle(contours2[0])
+    if not cap1.isOpened() or not cap2.isOpened():
+      
+      print("Erreur lors de l'ouverture des caméras.")
+      exit(1)
 
-        # Use new threshold to detect the object
-        if radius1 > 400 and radius2 > 400:
+
+    # Frame skipping
+    frame_skip = 5  
+    frame_count = 0
+
+    previous_frame1 = None
+    previous_frame2 = None
+
+    movement2 = False
+    movement1 = False
+
+    # Flag pour le suivi du calibrage
+    recalibration_done = False
+
+
+
+
+
+    while True:
+        frame_count += 1
+
+        # Skip frames
+        if frame_count % frame_skip != 0:
+            continue
+
+        ret1, frame1 = cap1.read()
+        ret2, frame2 = cap2.read()
+
+        if not ret1 or not ret2:
+            print("Erreur lors de la lecture des caméras.")
+            break
+
+        if previous_frame1 is not None and previous_frame2 is not None:
+            movement1 = detect_camera_movement(previous_frame1, frame1, change_ratio_threshold=0.4)
+            movement2 = detect_camera_movement(previous_frame2, frame2, change_ratio_threshold=0.4)
+
+            if (movement1 or movement2) and not recalibration_done:
+                print("Mouvement détecté. Recalibration des caméras...")
+                ret1, K1, dist1, rvecs1, tvecs1 = calibrate_camera_from_video(PHONE_CAMERA_URL1, rows, cols, square_size)
+                ret2, K2, dist2, rvecs2, tvecs2 = calibrate_camera_from_video(PHONE_CAMERA_URL2, rows, cols, square_size)
+                recalibration_done = True  # Mark recalibration as done
+                movement2 = False
+                movement1 = False
+                if not ret1 or not ret2:
+                    print("Erreur lors de la recalibration.")
+                    break
+            elif not movement1 and not movement2:
+                recalibration_done = False  # Reset the flag when no movement is detectedq
+
+        hsv1 = bgr_to_hsv(frame1)
+        hsv2 = bgr_to_hsv(frame2)
+
+        frame1_blurred = gaussian_blur(hsv1, 3)
+        frame2_blurred = gaussian_blur(hsv2, 3)
+
+        lower = np.array([35, 100, 50])
+        upper = np.array([85, 255, 255])
+
+        mask1 = in_range(frame1_blurred, lower, upper)
+        mask2 = in_range(frame2_blurred, lower, upper)
+
+        contours1 = find_contours(mask1)
+        contours2 = find_contours(mask2)
+
+        if contours1 and contours2:
+            # Sort contours by area
+            contours1 = sorted(contours1, key=cv2.contourArea, reverse=True)
+            contours2 = sorted(contours2, key=cv2.contourArea, reverse=True)
+
+            # Trouver les cercles minimums
+            center1, radius1 = min_enclosing_circle(contours1[0])
+            center2, radius2 = min_enclosing_circle(contours2[0])
+
+            # Use new threshold to detect the object
+            if radius1 > 400 and radius2 > 400:
                 # Dessiner le cercle sur l'image
                 print('je rentre dans la boucle de detection')
                 cv2.circle(frame1, center1, radius1, (255, 0, 0), 2)  # Cercle vert
@@ -215,50 +231,54 @@ while True:
                 cv2.putText(frame2, "Objet detecte dans la camera 2 ", (center2[0] - 50, center2[1] - 10),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.9, (255, 0, 0), 2)
         
-        # Validation de l'écart vertical entre les caméras
-        if validate_y_coordinates(center1, center2):
-            print("Les coordonnées y sont similaires.")
-        else: 
-            print("Les coordonnées y ne sont pas similaires.")
-            continue
+            # Validation de l'écart vertical entre les caméras
+            if validate_y_coordinates(center1, center2):
+                print("Les coordonnées y sont similaires.")
+            else:
+                print("Les coordonnées y ne sont pas similaires.")
+                continue
         
-        # Calcul de la position 3D
-        points_3d = calculate_3d_position(
-            center1, center2, K1, K2, rvecs1[0], tvecs1[0], rvecs2[0], tvecs2[0]
-        )
-        print(f"Position 3D estimée : {points_3d}")
+            # Calcul de la position 3D
+            points_3d = calculate_3d_position(
+                center1, center2, K1, K2, rvecs1[0], tvecs1[0], rvecs2[0], tvecs2[0]
+            )
+            print(f"Position 3D estimée : {points_3d}")
 
-        # Calcul de la nouvelle origine (milieu entre les caméras)
-        new_origin = calculate_mid_point(tvecs1[0], tvecs2[0])
+            # Calcul de la nouvelle origine (milieu entre les caméras)
+            new_origin = calculate_mid_point(tvecs1[0], tvecs2[0])
 
-        # Transformation des coordonnées 3D vers la nouvelle origine
-        points_3d_transformed = transform_to_new_origin(points_3d, new_origin)
-        print(f"Position 3D (nouvelle origine) : {points_3d_transformed}")
+            # Transformation des coordonnées 3D vers la nouvelle origine
+            points_3d_transformed = transform_to_new_origin(points_3d, new_origin)
+            print(f"Position 3D (nouvelle origine) : {points_3d_transformed}")
 
 
-        # Calcul et affichage de l'écart horizontal
-        horizontal_displacement = calculate_horizontal_displacement(center1, center2)
-        print(f"Écart horizontal entre les centres : {horizontal_displacement} pixels")
+            # Calcul et affichage de l'écart horizontal
+            horizontal_displacement = calculate_horizontal_displacement(center1, center2)
+            print(f"Écart horizontal entre les centres : {horizontal_displacement} pixels")
 
-        # Afficher les résultats
-        cv2.circle(frame1, tuple(map(int, center1)), int(radius1), (0, 255, 0), 2)
-        cv2.circle(frame2, tuple(map(int, center2)), int(radius2), (0, 255, 0), 2)
+            cv2.circle(frame1, tuple(map(int, center1)), int(radius1), (0, 255, 0), 2)
+            cv2.circle(frame2, tuple(map(int, center2)), int(radius2), (0, 255, 0), 2)
 
-    # Update previous frames
-    previous_frame1 = frame1.copy()
-    previous_frame2 = frame2.copy()
 
-    # Display frames
-    out1.write(frame1)
-    out2.write(frame2)
-    cv2.imshow('Caméra 1', frame1)
-    cv2.imshow('Caméra 2', frame2)
+    
+   
+        # Update previous frames
+        previous_frame1 = frame1.copy()
+        previous_frame2 = frame2.copy()
 
-    if cv2.waitKey(1) & 0xFF == ord('q'):
-        break
+   
+        cv2.imshow('Caméra 1', frame1)
+        cv2.imshow('Caméra 2', frame2)
 
-cap1.release()
-cap2.release()
-cv2.destroyAllWindows()
+        if cv2.waitKey(1) & 0xFF == ord('q'):
+            break
+
+    cap1.release()
+    cap2.release()
+    cv2.destroyAllWindows()
+
 
 '''
+
+
+    
