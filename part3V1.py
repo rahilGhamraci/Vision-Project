@@ -2,9 +2,6 @@
 Ce fichier contient le code de la partie 3 :
 calcul de la postion 3D ,en utilisant la detection par couleurs de l'objet
 
-RM : ce code a subit des modifications avant etre intégré dans l'interface:
-- ajout des processus pour calibrer les deux caméras en meme temps 
-
 '''
 
 import cv2
